@@ -78,6 +78,10 @@ class TelegramBot:
     # ------------------------------------------------------------------
     # Authorization guard
     # ------------------------------------------------------------------
+    def _is_setup_mode(self) -> bool:
+        """Setup mode: chat_id not configured yet."""
+        return self._chat_id == 0
+
     def _is_authorized(self, update: Update) -> bool:
         cid = update.effective_chat.id
         if cid != self._chat_id:
@@ -89,6 +93,13 @@ class TelegramBot:
     # Commands
     # ------------------------------------------------------------------
     async def _cmd_start(self, update: Update, _context):
+        if self._is_setup_mode():
+            cid = update.effective_chat.id
+            await update.message.reply_text(
+                f"Your chat ID: {cid}\n\nPaste it into Settings in the app, then restart."
+            )
+            log.info(f"Setup mode: told chat_id={cid} to user")
+            return
         if not self._is_authorized(update):
             return
         await update.message.reply_text(

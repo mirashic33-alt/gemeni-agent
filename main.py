@@ -30,17 +30,19 @@ def main():
     def _start_telegram(provider):
         token   = keystore.get("TELEGRAM_TOKEN")
         chat_id = keystore.get("TELEGRAM_CHAT_ID")
-        if not token or not chat_id:
-            log.warning("Telegram not started: token or chat_id not set.")
+        if not token:
+            log.warning("Telegram not started: token not set.")
             return
         try:
             from channels.telegram.bot import TelegramBot
             bot = TelegramBot(
-                token=token, chat_id=int(chat_id),
+                token=token, chat_id=int(chat_id) if chat_id else 0,
                 provider=provider, bridge=bridge
             )
             bot.start()
             window._tg_bot = bot
+            if not chat_id:
+                log.info("Telegram started in setup mode (chat_id not set).")
         except Exception as exc:
             log.error(f"Failed to start Telegram bot: {exc}")
 
