@@ -6,6 +6,10 @@ data/keys.enc
 agent.log
 workspace/chat_history.json
 workspace/diary/
+workspace/scripts/
+
+# Стенограммы (ГГГГ-ММ-ДД.md в корне)
+[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md
 
 # Python
 __pycache__/
