@@ -85,7 +85,15 @@ class StartupWorker(QThread):
         from data.chat_history import load
         history = load()
         log.info(f"Loaded {len(history)} messages from history.")
-        provider.start_chat(history=history)
+        system_prompt = (
+            "Each user message contains the current date and time in brackets "
+            "at the start (e.g. [10.04.2026, Friday, 15:14]). "
+            "Use it silently for temporal orientation — to understand when messages "
+            "were sent, what time of day it is, etc. "
+            "Never repeat, quote, or draw attention to this timestamp unless the user "
+            "explicitly asks what time or date it is."
+        )
+        provider.start_chat(history=history, system_prompt=system_prompt)
 
         # Done
         self.status.emit("Ready.")
