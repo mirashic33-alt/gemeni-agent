@@ -23,7 +23,9 @@ def main():
 
     from core.bridge import AgentBridge
     bridge = AgentBridge(parent=app)
+    window._bridge = bridge
     bridge.tg_user_message.connect(window.on_tg_user_message)
+    bridge.tg_interim.connect(window.on_tg_interim)
     bridge.tg_agent_message.connect(window.on_tg_agent_message)
     bridge.history_changed.connect(window.on_tg_history_changed)
 

@@ -1,3 +1,4 @@
+import re
 import time
 from datetime import datetime
 from PySide6.QtWidgets import (
@@ -11,6 +12,7 @@ from .theme_config import (
     STATE, ICON_FONT, MID_BUTTON_ICONS, SEND_ICON, MIC_ICON, UI_TEXTS, build_qss
 )
 from .settings_dialog import SettingsDialog
+from core.names import get_agent_name, get_user_name, refresh as refresh_names
 
 
 def create_hline():
@@ -21,6 +23,26 @@ def create_hline():
     return line
 
 
+def _md_to_html(text: str) -> str:
+    """Converts a small subset of markdown to HTML for QLabel rendering."""
+    # Escape HTML special chars
+    text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    # Headers (### ## #)
+    text = re.sub(r'^#{1,3}\s+(.+)$', r'<b>\1</b>', text, flags=re.MULTILINE)
+    # Bold **text**
+    text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
+    # Italic *text*
+    text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', text)
+    # Links [title](url) — show only title, full url in href
+    text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)',
+                  r'<a href="\2" style="color:#FFB347;text-decoration:underline;">\1</a>', text)
+    # Bullet list items
+    text = re.sub(r'^[-*]\s+(.+)$', r'&nbsp;&nbsp;• \1', text, flags=re.MULTILINE)
+    # Newlines → <br>
+    text = text.replace("\n", "<br>")
+    return text
+
+
 def make_bubble(prefix, text, is_user):
     frame = QFrame()
     frame.setObjectName("bubble_user" if is_user else "bubble_agent")
@@ -29,9 +51,12 @@ def make_bubble(prefix, text, is_user):
     layout.setSpacing(2)
     prefix_lbl = QLabel(prefix)
     prefix_lbl.setObjectName("bubble_prefix")
-    text_lbl = QLabel(text)
+    text_lbl = QLabel()
     text_lbl.setObjectName("bubble_text")
     text_lbl.setWordWrap(True)
+    text_lbl.setTextFormat(Qt.RichText)
+    text_lbl.setOpenExternalLinks(True)
+    text_lbl.setText(_md_to_html(text) if not is_user else text.replace("\n", "<br>"))
     layout.addWidget(prefix_lbl)
     layout.addWidget(text_lbl)
     return frame
@@ -75,7 +100,6 @@ class ChatArea(QFrame):
 
     def scroll_to_bottom(self):
         self._auto_scroll = True
-        # Trigger layout update so rangeChanged fires
         self.content.updateGeometry()
 
 
@@ -200,6 +224,7 @@ class MainWindow(QWidget):
         self._provider = None
         self._model_name = ""
         self._start_time = 0.0
+        self._bridge = None   # set from main.py
         self._tg_bot = None   # set from main.py after bot starts
 
         # Request timer — ticks while the model is thinking (50 ms)
@@ -258,20 +283,20 @@ class MainWindow(QWidget):
     # ------------------------------------------------------------------
     def _load_history(self):
         """Loads history from file and renders it in the chat."""
-        from data.chat_history import load, MAX_MESSAGES
+        from data.chat_history import load, _limit as _history_limit
         messages = load()
         for msg in messages:
-            prefix = f"[{msg.get('ts', '')}] {'You' if msg['role'] == 'user' else 'Gemeni'}"
+            prefix = f"[{msg.get('ts', '')}] {get_user_name() if msg['role'] == 'user' else get_agent_name()}"
             self.chat_area.add_bubble(prefix, msg["text"], is_user=(msg["role"] == "user"))
         self.chat_area.scroll_to_bottom()
         self._update_header_count()
 
     def _update_header_count(self):
         """Updates the message counter in the header."""
-        from data.chat_history import load, MAX_MESSAGES
+        from data.chat_history import load, _limit as _history_limit
         count = len(load())
         if self._model_name:
-            self.set_header(f"Gemeni  ·  {self._model_name}  {count}/{MAX_MESSAGES}")
+            self.set_header(f"{get_agent_name()}  ·  {self._model_name}  {count}/{_history_limit()}")
 
     def _on_clear_chat(self):
         from PySide6.QtWidgets import QMessageBox
@@ -284,9 +309,8 @@ class MainWindow(QWidget):
         )
         if reply == QMessageBox.Yes:
             clear()
-            # Reset the provider's chat session
             if self._provider:
-                self._provider.start_chat(history=[])
+                self._provider.start_chat(history=[], system_prompt=self._provider.system_prompt)
             # Clear chat widgets
             layout = self.chat_area._inner
             while layout.count():
@@ -334,11 +358,13 @@ class MainWindow(QWidget):
             return
 
         from data.chat_history import append
+        from core.daily_log import append_message as log_msg
         ts = datetime.now().strftime("%H:%M")
-        self.chat_area.add_bubble(f"[{ts}] You", text, is_user=True)
+        self.chat_area.add_bubble(f"[{ts}] {get_user_name()}", text, is_user=True)
         self.input_area.clear()
         self.chat_area.scroll_to_bottom()
         append("user", text)
+        log_msg("user", text)
         self._update_header_count()
 
         self.send_btn.setEnabled(False)
@@ -350,22 +376,39 @@ class MainWindow(QWidget):
         if self._tg_bot:
             self._tg_bot.post_typing()
 
-        self._worker = MessageWorker(self._provider, text, parent=self)
+        self._worker = MessageWorker(self._provider, text, bridge=self._bridge, parent=self)
         self._worker.response.connect(self._on_response)
+        self._worker.interim.connect(self._on_interim)
         self._worker.error.connect(self._on_message_error)
         self._worker.start()
 
+    def _on_interim(self, text: str):
+        if text.startswith("[tool]"):
+            self.set_status(text[6:])  # status bar only — no bubble, no Telegram
+            return
+
+        from core.daily_log import append_message as log_msg
+        ts = datetime.now().strftime("%H:%M")
+        self.chat_area.add_bubble(f"[{ts}] {get_agent_name()} ·", text, is_user=False)
+        self.chat_area.scroll_to_bottom()
+        log_msg("agent", text)
+        if self._tg_bot:
+            self._tg_bot.post_message(text)
+
     def _on_response(self, text: str):
         from data.chat_history import append
+        from core.daily_log import append_message as log_msg
         self._timer.stop()
         elapsed = time.perf_counter() - self._start_time
         sec = int(elapsed)
         hs = int((elapsed - sec) * 100)
 
         ts = datetime.now().strftime("%H:%M")
-        self.chat_area.add_bubble(f"[{ts}] Gemeni", text, is_user=False)
+        refresh_names()
+        self.chat_area.add_bubble(f"[{ts}] {get_agent_name()}", text, is_user=False)
         self.chat_area.scroll_to_bottom()
         append("agent", text)
+        log_msg("agent", text)
         self._update_header_count()
         self.send_btn.setEnabled(True)
         self.set_status(f"Done  ·  {sec}.{hs:02d}s")
@@ -400,6 +443,7 @@ class MainWindow(QWidget):
         """Called when background initialization completes successfully."""
         self._provider = provider
         self._model_name = provider.model
+        refresh_names()
         self.set_status(f"Ready  ·  {self._model_name}")
         self._load_history()
 
@@ -411,14 +455,32 @@ class MainWindow(QWidget):
     # ------------------------------------------------------------------
     # Incoming messages from Telegram → display in UI
     # ------------------------------------------------------------------
-    def on_tg_user_message(self, ts: str, text: str):
-        self.chat_area.add_bubble(f"[{ts}] You (TG)", text, is_user=True)
+    def on_tg_interim(self, text: str):
+        """Interim from Telegram-initiated agent call — show in UI only, no re-send."""
+        if text.startswith("[tool]"):
+            self.set_status(text[6:])  # status bar only
+            return
+        ts = datetime.now().strftime("%H:%M")
+        self.chat_area.add_bubble(f"[{ts}] {get_agent_name()} ·", text, is_user=False)
         self.chat_area.scroll_to_bottom()
 
+    def on_tg_user_message(self, ts: str, text: str):
+        self.chat_area.add_bubble(f"[{ts}] {get_user_name()} (TG)", text, is_user=True)
+        self.chat_area.scroll_to_bottom()
+        self.set_status("Thinking...")
+        self._start_time = time.perf_counter()
+        self._timer.start()
+
     def on_tg_agent_message(self, ts: str, text: str):
-        self.chat_area.add_bubble(f"[{ts}] Gemeni (TG)", text, is_user=False)
+        self._timer.stop()
+        elapsed = time.perf_counter() - self._start_time
+        sec = int(elapsed)
+        hs = int((elapsed - sec) * 100)
+        refresh_names()
+        self.chat_area.add_bubble(f"[{ts}] {get_agent_name()} (TG)", text, is_user=False)
         self.chat_area.scroll_to_bottom()
         self._update_header_count()
+        self.set_status(f"Done  ·  {sec}.{hs:02d}s")
 
     def on_tg_history_changed(self):
         self._update_header_count()

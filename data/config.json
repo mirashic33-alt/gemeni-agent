@@ -1,0 +1,13 @@
+{
+  "chat_model": "gemini-3-flash-preview",
+  "temperature": 0.9,
+  "internet_mode": "auto",
+  "history_limit": 100,
+  "max_tool_rounds": 10,
+  "max_continuations": 0,
+  "max_tool_nudges": 7,
+  "loop_detect_threshold": 4,
+  "max_result_chars": 12000,
+  "diary_interval": 100,
+  "diary_load_at_startup": true
+}

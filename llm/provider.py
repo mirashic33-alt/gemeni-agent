@@ -7,20 +7,19 @@ IMPORTANT: use `from google import genai`, NOT `google-generativeai`.
 from google import genai
 from google.genai import types
 
+import data.config as config
 from data.logger import get_logger
 
 log = get_logger("llm")
-
-MODEL = "gemini-3-flash-preview"
 
 
 class GeminiProvider:
     def __init__(self, api_key: str):
         self._api_key = api_key
         self.client: genai.Client | None = None
-        self.model: str = MODEL
-        self._chat = None          # active chat session
-        self._system_prompt = ""   # system prompt loaded from file
+        self.model: str = config.get_chat_model()
+        self._chat = None     # kept for compatibility, not used by agent_loop
+        self.system_prompt = ""
 
     def connect(self) -> None:
         log.info("Initializing Gemini client...")
@@ -30,9 +29,9 @@ class GeminiProvider:
     def ping(self) -> bool:
         if self.client is None:
             raise RuntimeError("Client not initialized.")
-        log.info(f"Pinging model {MODEL}...")
+        log.info(f"Pinging model {self.model}...")
         response = self.client.models.generate_content(
-            model=MODEL,
+            model=self.model,
             contents="Say: ok",
             config=types.GenerateContentConfig(max_output_tokens=8),
         )
@@ -49,7 +48,7 @@ class GeminiProvider:
         if self.client is None:
             raise RuntimeError("Client not initialized.")
 
-        self._system_prompt = system_prompt
+        self.system_prompt = system_prompt
 
         # Convert history to Gemini format: "agent" → "model"
         gemini_history: list[types.Content] = []
@@ -62,17 +61,14 @@ class GeminiProvider:
                 )
             )
 
-        config = types.GenerateContentConfig(
-            system_instruction=system_prompt or None,
-        )
         self._chat = self.client.chats.create(
-            model=MODEL,
+            model=self.model,
             history=gemini_history,
-            config=config,
+            config=types.GenerateContentConfig(system_instruction=system_prompt or None),
         )
         log.info(f"Chat session created, loaded {len(gemini_history)} messages.")
 
-    def send(self, message: str, system_prompt: str = "") -> str:
+    def send(self, message: str) -> str:
         """
         Sends a message within the current chat session.
         If no session exists — creates an empty one.
@@ -82,7 +78,7 @@ class GeminiProvider:
 
         if self._chat is None:
             log.warning("Chat session not initialized, creating empty session.")
-            self.start_chat(history=[], system_prompt=system_prompt)
+            self.start_chat(history=[], system_prompt=self.system_prompt)
 
         log.info(f"→ [{self.model}]: {message[:80]}{'...' if len(message) > 80 else ''}")
         response = self._chat.send_message(message)

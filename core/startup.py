@@ -14,6 +14,8 @@ Each step reports status to the UI via the `status` signal.
 from PySide6.QtCore import QThread, Signal
 
 import data.keystore as keystore
+import data.config as config
+from core.memory_loader import build_system_prompt
 from data.logger import get_logger
 from llm.provider import GeminiProvider
 
@@ -41,8 +43,9 @@ class StartupWorker(QThread):
             self.failed.emit(f"Error: {exc}")
 
     def _init(self) -> None:
-        # Step 1 — read keys from encrypted keystore
+        # Step 1 — load config and keys
         self.status.emit("Reading configuration...")
+        config.load()
 
         # Step 2 — validate keys
         self.status.emit("Checking keys...")
@@ -81,18 +84,14 @@ class StartupWorker(QThread):
             return
 
         # Step 5 — load history and create chat session
+        self.status.emit("Loading memory...")
+        system_prompt = build_system_prompt()
+        log.info(f"System prompt built: {len(system_prompt)} chars.")
+
         self.status.emit("Loading chat history...")
         from data.chat_history import load
         history = load()
         log.info(f"Loaded {len(history)} messages from history.")
-        system_prompt = (
-            "Each user message contains the current date and time in brackets "
-            "at the start (e.g. [10.04.2026, Friday, 15:14]). "
-            "Use it silently for temporal orientation — to understand when messages "
-            "were sent, what time of day it is, etc. "
-            "Never repeat, quote, or draw attention to this timestamp unless the user "
-            "explicitly asks what time or date it is."
-        )
         provider.start_chat(history=history, system_prompt=system_prompt)
 
         # Done

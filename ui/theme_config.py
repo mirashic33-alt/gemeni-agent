@@ -208,4 +208,121 @@ QPushButton#mic_btn:pressed {{
     border-color: #c03030;
     color: #ffffff;
 }}
+
+/* ── Settings dialog ──────────────────────────────────────────────────── */
+
+QWidget#settings_title_bar, QWidget#settings_tab_bar, QWidget#settings_footer {{
+    background-color: {abg};
+}}
+
+QLabel#settings_title {{
+    font-size: 14px;
+    font-weight: bold;
+    color: {text};
+}}
+
+/* Tab buttons */
+QPushButton#tab_btn {{
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: {radius}px;
+    padding: 3px 14px;
+    font-size: 12px;
+}}
+QPushButton#tab_btn:hover {{
+    background-color: {btn_hover_bg};
+    border-color: {border};
+}}
+QPushButton#tab_btn:checked {{
+    background-color: {btn_bg};
+    border-color: {border};
+    font-weight: bold;
+}}
+
+/* Save button — slightly brighter */
+QPushButton#settings_save_btn {{
+    background-color: {ubg};
+    border-color: {btn_hover_bg};
+    font-weight: bold;
+}}
+QPushButton#settings_save_btn:hover {{
+    background-color: {btn_hover_bg};
+}}
+
+/* Settings page content area */
+QScrollArea#settings_scroll, QScrollArea#settings_scroll > QWidget,
+QWidget#settings_page {{
+    background-color: {input_bg};
+    border: none;
+}}
+QWidget#settings_row_right {{
+    background-color: transparent;
+}}
+
+/* Section label */
+QLabel#settings_section_lbl {{
+    font-size: 10px;
+    font-weight: bold;
+    color: {bpfx};
+    margin-top: 8px;
+    background-color: transparent;
+}}
+
+/* Row labels */
+QLabel#settings_row_label {{
+    font-size: 13px;
+    background-color: transparent;
+}}
+QLabel#settings_row_sublabel {{
+    font-size: 10px;
+    color: {bpfx};
+    background-color: transparent;
+}}
+
+/* Disabled controls */
+QLineEdit:disabled {{
+    color: {bpfx};
+    background-color: {abg};
+    border-color: {aborder};
+}}
+QComboBox:disabled {{
+    color: {bpfx};
+    background-color: {abg};
+    border-color: {aborder};
+}}
+
+/* Combo box */
+QComboBox {{
+    background-color: {input_bg};
+    color: {text};
+    border: 1px solid {border};
+    border-radius: {radius}px;
+    padding: 4px 8px;
+    font-size: 13px;
+}}
+QComboBox:hover {{
+    border-color: {btn_hover_bg};
+}}
+QComboBox::drop-down {{
+    border: none;
+    width: 20px;
+}}
+QComboBox QAbstractItemView {{
+    background-color: {input_bg};
+    color: {text};
+    border: 1px solid {border};
+    selection-background-color: {btn_bg};
+    selection-color: {text};
+    outline: none;
+}}
+
+/* "Soon" badge */
+QLabel#settings_badge {{
+    font-size: 10px;
+    color: {bpfx};
+    border: 1px solid {aborder};
+    border-radius: 4px;
+    padding: 2px 10px;
+    background-color: transparent;
+}}
 """.strip()

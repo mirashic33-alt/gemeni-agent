@@ -7,6 +7,9 @@ agent.log
 workspace/chat_history.json
 workspace/diary/
 workspace/scripts/
+workspace/memory/
+workspace/skills/
+workspace/project/
 
 # Стенограммы (ГГГГ-ММ-ДД.md в корне)
 [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md
@@ -26,3 +29,9 @@ env/
 
 # Claude Code
 .claude/
+
+# Личные файлы (не для публичного репо)
+GIT_GUIDE.md
+PLAN.md
+PROGRESS.md
+ROADMAP_RU.md
