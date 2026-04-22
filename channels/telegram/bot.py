@@ -9,6 +9,7 @@ Uses the same GeminiProvider as the UI.
 import asyncio
 import re
 import threading
+import time
 from datetime import datetime
 
 from telegram import Update
@@ -53,10 +54,14 @@ class TelegramBot:
     def _run(self):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        loop.run_until_complete(self._main())
+        try:
+            loop.run_until_complete(self._main())
+        except Exception as exc:
+            log.error(f"Telegram bot crashed: {exc}", exc_info=True)
 
     async def _main(self):
         self._loop = asyncio.get_running_loop()
+        log.info(f"Connecting bot (token={self._token[:8]}..., chat_id={self._chat_id})")
         self._app  = Application.builder().token(self._token).build()
         self._app.add_handler(CommandHandler("start", self._cmd_start))
         self._app.add_handler(CommandHandler("clear", self._cmd_clear))
@@ -92,8 +97,6 @@ class TelegramBot:
 
     def post_message(self, text: str):
         """Send text to Telegram from any thread, splitting if needed."""
-        if text.startswith("[tool]"):
-            return  # tool status notifications are desktop status-bar only
         if self._loop and self._app:
             for chunk in self._split(text):
                 asyncio.run_coroutine_threadsafe(
@@ -119,7 +122,6 @@ class TelegramBot:
     # Authorization guard
     # ------------------------------------------------------------------
     def _is_setup_mode(self) -> bool:
-        """Setup mode: chat_id not configured yet."""
         return self._chat_id == 0
 
     def _is_authorized(self, update: Update) -> bool:
@@ -133,8 +135,9 @@ class TelegramBot:
     # Commands
     # ------------------------------------------------------------------
     async def _cmd_start(self, update: Update, _context):
+        cid = update.effective_chat.id
+        log.info(f"/start received from chat_id={cid} (stored chat_id={self._chat_id}, setup_mode={self._is_setup_mode()})")
         if self._is_setup_mode():
-            cid = update.effective_chat.id
             await update.message.reply_text(
                 f"Your chat ID: {cid}\n\nPaste it into Settings in the app, then restart."
             )
@@ -179,14 +182,28 @@ class TelegramBot:
         append("user", text)
         log_msg("user", text)
 
-        # Call agent_loop in a thread (has tools + internet, same as UI)
+        # Record start time for elapsed display
+        start_time = time.monotonic()
+
         try:
             datetime_context = get_datetime_context()
             message_with_time = f"[{datetime_context}]\n{text}"
 
-            def _on_interim(text: str):
-                self.post_message(text)             # [tool] skipped inside post_message
-                self._bridge.tg_interim.emit(text)  # mirror to desktop UI
+            def _on_interim(interim_text: str):
+                if interim_text.startswith("[tool]"):
+                    # Each tool call → separate permanent bubble so user can track actions
+                    label = interim_text[6:]
+                    if self._loop and self._app:
+                        asyncio.run_coroutine_threadsafe(
+                            self._app.bot.send_message(
+                                chat_id=self._chat_id,
+                                text=label,
+                            ),
+                            self._loop,
+                        )
+                else:
+                    self.post_message(interim_text)
+                self._bridge.tg_interim.emit(interim_text)  # mirror to desktop UI
 
             def _run():
                 return agent_loop.run(
@@ -199,7 +216,7 @@ class TelegramBot:
                     on_interim=_on_interim,
                 )
 
-            # Keep sending typing indicator every 4s while model works (plain thread)
+            # Keep sending typing indicator every 4s while model works
             stop_typing = threading.Event()
 
             def _typing_thread():
@@ -217,18 +234,23 @@ class TelegramBot:
                 response = await asyncio.to_thread(_run)
             finally:
                 stop_typing.set()
+
         except Exception as exc:
             log.error(f"Error processing Telegram message: {exc}")
             await update.message.reply_text(f"Error: {exc}")
             return
 
+        elapsed = time.monotonic() - start_time
         ts_resp = datetime.now().strftime("%H:%M")
         log.info(f"→ Telegram response: {response[:80]}")
 
-        # Send response to Telegram — hard cap to avoid flooding on emoji loops
-        _TG_MAX_RESPONSE = 3 * self._TG_LIMIT  # max 3 messages (~12 000 chars)
-        tg_text = response if len(response) <= _TG_MAX_RESPONSE else (
-            response[:_TG_MAX_RESPONSE] + "\n\n...[response too long, see desktop app]"
+        # Append elapsed time to the end of the response
+        response_with_time = response + f"\n\n_({elapsed:.1f}с)_"
+
+        # Send response — hard cap to avoid flooding on emoji loops
+        _TG_MAX_RESPONSE = 3 * self._TG_LIMIT
+        tg_text = response_with_time if len(response_with_time) <= _TG_MAX_RESPONSE else (
+            response_with_time[:_TG_MAX_RESPONSE] + "\n\n...[response too long, see desktop app]"
         )
         for chunk in self._split(tg_text):
             await update.message.reply_text(_md_to_tg(chunk), parse_mode="HTML")

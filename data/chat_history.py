@@ -26,6 +26,28 @@ def _ensure_dir():
     os.makedirs(os.path.dirname(HISTORY_PATH), exist_ok=True)
 
 
+def _sanitize(messages: list[dict]) -> list[dict]:
+    """Remove broken tails from messages that were hard-cut by _MAX_MSG_CHARS.
+    An unterminated sentence in history triggers the model to 'continue' it → loop.
+    """
+    _TRUNC_MARKER = "[обрезано: слишком длинное сообщение]"
+    for msg in messages:
+        text = msg.get("text", "")
+        if _TRUNC_MARKER in text:
+            # Strip the marker and everything after the last sentence boundary
+            idx = text.find(_TRUNC_MARKER)
+            clean = text[:idx].rstrip()
+            # Find the last sentence end (., !, ?, \n)
+            last_end = max(
+                clean.rfind("."), clean.rfind("!"),
+                clean.rfind("?"), clean.rfind("\n"),
+            )
+            if last_end > len(clean) // 2:
+                clean = clean[:last_end + 1]
+            msg["text"] = clean
+    return messages
+
+
 def load() -> list[dict]:
     """Loads history from file. Returns a list of messages."""
     if not os.path.exists(HISTORY_PATH):
@@ -34,7 +56,7 @@ def load() -> list[dict]:
         with open(HISTORY_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, list):
-            return data[-_limit():]
+            return _sanitize(data[-_limit():])
     except Exception:
         pass
     return []

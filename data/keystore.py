@@ -57,15 +57,32 @@ def _dpapi_decrypt(data: bytes) -> bytes:
 _session: dict = {}
 
 
+_load_error: str = ""  # non-empty if decryption failed
+
+
 def load_if_exists() -> None:
-    """Loads and decrypts keys.enc if the file exists."""
-    global _session
+    """Loads and decrypts keys.enc if the file exists. On failure sets _load_error instead of raising."""
+    global _session, _load_error
+    _load_error = ""
     if not os.path.exists(KEYSTORE_PATH):
         _session = {}
         return
-    with open(KEYSTORE_PATH, "rb") as f:
-        blob = f.read()
-    _session = json.loads(_dpapi_decrypt(blob))
+    try:
+        with open(KEYSTORE_PATH, "rb") as f:
+            blob = f.read()
+        _session = json.loads(_dpapi_decrypt(blob))
+    except Exception as e:
+        _session = {}
+        _load_error = (
+            f"Не удалось расшифровать ключи ({e}). "
+            "Возможно, файл keys.enc был создан на другом компьютере или под другим пользователем. "
+            "Введи ключи заново в Settings."
+        )
+
+
+def get_load_error() -> str:
+    """Returns the decryption error message if load failed, empty string otherwise."""
+    return _load_error
 
 
 def get(key: str, default: str = "") -> str:

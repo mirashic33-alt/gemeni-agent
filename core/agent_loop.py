@@ -56,23 +56,82 @@ _TOOL_ICONS = {
 }
 
 _TOOL_KEYWORDS = [
-    "создай", "создать", "create",
-    "запиши", "записать", "write",
-    "удали", "удалить", "delete", "remove",
-    "прочитай", "прочитать", "read",
-    "найди", "найти", "find", "search",
-    "выполни", "выполнить", "запусти", "запустить", "run",
-    "добавь", "добавить", "append",
-    "переименуй", "переименовать", "rename",
-    "перемести", "переместить", "move",
-    "файл", "file", "папку", "папка", "folder", "директор",
-    "список файлов", "list files",
+    # корни — покрывают все формы слова
+    "созда",      # создай, создать, создал, создание
+    "запис",      # запиши, записать, запись, запишу
+    "запомн",     # запомни, запомнить, запомнил
+    "сохран",     # сохрани, сохранить, сохранение
+    "удал",       # удали, удалить, удаление
+    "прочита",    # прочитай, прочитать
+    "чита",       # читай, читать
+    "найд",       # найди, найдёт
+    "наход",      # находи, находить
+    "поиск",      # поиск, поискать
+    "поищ",       # поищи
+    "выполн",     # выполни, выполнить
+    "запуст",     # запусти, запустить
+    "добав",      # добавь, добавить, добавление
+    "переимен",   # переименуй, переименовать
+    "перемест",   # перемести, переместить
+    "обнов",      # обнови, обновить, обновление
+    "измен",      # измени, изменить, изменение
+    "редакт",     # редактируй, редактировать
+    "отмет",      # отметь, отметить
+    "открой",     # открой, открыть
+    "открыт",     # открытие, открытый
+    # контекстные существительные — тоже покрывают все падежи
+    "дневник",    # дневник, дневника, в дневнике
+    "памят",      # память, памяти
+    "интернет",   # интернет, интернета, в интернете, интернету
+    "инет",       # инет, в инете
+    "сети",       # в сети, из сети
+    "сеть",       # сеть
+    "файл",       # файл, файла, файлы, файлов
+    "папк",       # папка, папку, папки
+    "директор",   # директория, директории
+    "скрипт",     # скрипт, скрипта, скрипты
+    # английские
+    "create", "write", "save", "delete", "remove", "read",
+    "find", "search", "run", "append", "rename", "move",
+    "update", "note", "diary", "file", "folder",
+    "internet", "web", "online",
+]
+
+# Корни прошедшего времени — "записал" = записал/записала/записали/записало
+# НЕ совпадает с "записать" (там "т", а не "л")
+_FALSE_CLAIM_KEYWORDS = [
+    "записал",       # записал/а/и
+    "сохранил",      # сохранил/а/и
+    "создал",        # создал/а/и
+    "добавил",       # добавил/а/и
+    "обновил",       # обновил/а/и
+    "удалил",        # удалил/а/и
+    "написал",       # написал/а/и
+    "отметил",       # отметил/а/и
+    "запомнил",      # запомнил/а/и
+    "выполнил",      # выполнил/а/и
+    "нашёл", "нашла",
+    "прочитал",      # прочитал/а
+    "переименовал",  # переименовал/а
+    "переместил",    # переместил/а
+    "изменил",       # изменил/а
+    "открыл",        # открыл/а
+    # английские
+    "i've written", "i've saved", "i've created", "i've added",
+    "i've updated", "i've deleted", "i've noted", "i have written",
+    "i've found", "i've read",
 ]
 
 
 def _looks_like_tool_request(message: str) -> bool:
     low = message.lower()
     return any(kw in low for kw in _TOOL_KEYWORDS)
+
+
+def _looks_like_false_claim(text: str) -> bool:
+    """Model claims to have done something without calling a tool."""
+    low = text.lower()
+    return any(kw in low for kw in _FALSE_CLAIM_KEYWORDS)
 
 
 # ── Internet search helpers ───────────────────────────────────────────────────
@@ -124,10 +183,33 @@ def _extract_sources(candidate) -> str:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _is_spam(text: str) -> bool:
+    """Return True if text looks like emoji spam or repeating phrase loop (for interim narration)."""
+    if len(text) <= 200:
+        return False
+    sample = text[-200:]
+    letter_count = sum(
+        1 for c in sample
+        if unicodedata.category(c).startswith(("L", "N", "Z"))
+    )
+    if letter_count / len(sample) < 0.3:
+        return True
+    if len(text) > 150:
+        tail = text[-300:]
+        for phrase_len in range(10, 61):
+            phrase = tail[-phrase_len:]
+            if tail.count(phrase) >= 4:
+                log.warning(f"Spam phrase detected in interim: '{phrase[:30]}' x{tail.count(phrase)}")
+                return True
+    return False
+
+
 def _is_meaningful(text: str) -> bool:
-    """Return False if text looks like an emoji/symbol loop (not worth continuing)."""
+    """Return False if text looks like an emoji/symbol loop or a repeating phrase loop."""
     if not text or len(text) < 20:
         return False
+
+    # Check for low letter/number density (emoji spam)
     if len(text) > 200:
         sample = text[-200:]
         letter_count = sum(
@@ -136,6 +218,20 @@ def _is_meaningful(text: str) -> bool:
         )
         if letter_count / len(sample) < 0.3:
             return False
+
+    # Check for repeating phrase loop (e.g. "наступило? наступило? наступило?")
+    # Take the last 300 chars, split into chunks and check for repetition
+    if len(text) > 150:
+        tail = text[-300:]
+        # Try phrase lengths from 10 to 60 chars
+        for phrase_len in range(10, 61):
+            phrase = tail[-phrase_len:]
+            # Count non-overlapping occurrences in the tail
+            count = tail.count(phrase)
+            if count >= 4:  # same phrase appears 4+ times in last 300 chars → loop
+                log.warning(f"Repetition loop detected: phrase '{phrase[:30]}' x{count}")
+                return False
+
     return True
 
 
@@ -180,6 +276,7 @@ def run(client, model: str, system_prompt: str,
     max_nudges      = config.get_max_tool_nudges()
     loop_threshold  = config.get_loop_detect_threshold()
     trunc_limit     = config.get_max_result_chars()
+    max_out_tokens  = config.get("max_output_tokens") or 4096
 
     # Convert history to Gemini format, dropping consecutive same-role messages
     gemini_history: list[types.Content] = []
@@ -190,6 +287,12 @@ def run(client, model: str, system_prompt: str,
             gemini_history[-1] = types.Content(role=role, parts=[types.Part(text=text)])
         else:
             gemini_history.append(types.Content(role=role, parts=[types.Part(text=text)]))
+
+    # Gemini requires history to start with "user" — drop leading model messages
+    # (can happen when history is trimmed at the 100-message boundary)
+    while gemini_history and gemini_history[0].role != "user":
+        gemini_history.pop(0)
+        log.warning("Dropped leading model message from history (Gemini requires user-first)")
 
     tools_map: dict = {fn.__name__: fn for fn in tools}
     internet_mode = config.get_internet_mode()
@@ -203,6 +306,7 @@ def run(client, model: str, system_prompt: str,
             tools=tools_list,
             tool_config=tool_config,
             temperature=config.get_temperature(),
+            max_output_tokens=max_out_tokens,
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         ),
         history=gemini_history,
@@ -211,6 +315,7 @@ def run(client, model: str, system_prompt: str,
     current_message = message
     recent_sigs: deque = deque(maxlen=loop_threshold * 3)
     collected_text: list[str] = []
+    last_chunk_tail: str = ""   # used to detect continuation loops
     had_errors       = False
     had_success      = False
     retry_nudges     = 0
@@ -233,14 +338,15 @@ def run(client, model: str, system_prompt: str,
 
         tool_calls = [p.function_call for p in parts if getattr(p, "function_call", None)]
 
-        # Detect server-side google_search usage and notify
-        if on_interim:
-            has_search = any(
-                getattr(getattr(p, "executable_code", None), "language", None) == "GEMINI_SEARCH"
-                or getattr(p, "search_queries", None)
-                for p in parts
-            ) or bool(getattr(getattr(candidate, "grounding_metadata", None), "grounding_chunks", None))
-            if has_search:
+        # Detect server-side google_search usage
+        has_search = any(
+            getattr(getattr(p, "executable_code", None), "language", None) == "GEMINI_SEARCH"
+            or getattr(p, "search_queries", None)
+            for p in parts
+        ) or bool(getattr(getattr(candidate, "grounding_metadata", None), "grounding_chunks", None))
+        if has_search:
+            had_success = True  # internet search counts as a successful tool use — don't nudge
+            if on_interim:
                 on_interim("[tool]🌐 Searching the web")
 
         # ── Text-only response: model is done (or giving up) ─────────────────
@@ -249,12 +355,17 @@ def run(client, model: str, system_prompt: str,
             round_text  = "".join(text_chunks).strip()
 
             # No tools called yet but request needs one — nudge up to N times
+            # Fires if: original message looks like a tool request OR model claims to have done something without calling a tool
+            needs_nudge = (
+                _looks_like_tool_request(original_message)
+                or (round_text and _looks_like_false_claim(round_text))
+            )
             if (not had_success
                     and tool_first_nudges < max_nudges
-                    and _looks_like_tool_request(original_message)
+                    and needs_nudge
                     and round_idx < max_rounds - 1):
                 tool_first_nudges += 1
-                log.info(f"Tool-first nudge #{tool_first_nudges} — model skipped tools")
+                log.info(f"Tool-first nudge #{tool_first_nudges} — model skipped tools (false_claim={bool(round_text and _looks_like_false_claim(round_text))})")
                 if round_text and on_interim:
                     on_interim(round_text)   # show immediately, not at end
                 current_message = _TOOL_FIRST_NUDGE
@@ -280,8 +391,17 @@ def run(client, model: str, system_prompt: str,
                     and contin_nudges < max_contin
                     and round_idx < max_rounds - 1
                     and _is_meaningful(round_text)):
+                # Extra guard: if new chunk starts with the tail of the previous chunk
+                # it means the model is looping instead of continuing → hard stop
+                if last_chunk_tail and round_text.startswith(last_chunk_tail[:60]):
+                    log.warning(
+                        f"Continuation loop detected: new chunk repeats previous tail. Stopping."
+                    )
+                    collected_text.append(round_text)
+                    break
                 contin_nudges += 1
                 log.info(f"MAX_TOKENS — continuation #{contin_nudges}")
+                last_chunk_tail = round_text[-80:].strip()  # remember tail for next check
                 if round_text and on_interim:
                     on_interim(round_text)   # show immediately, not at end
                 current_message = (
@@ -304,8 +424,11 @@ def run(client, model: str, system_prompt: str,
         # Emit as interim — don't add to the final answer.
         for p in parts:
             if getattr(p, "text", None) and p.text.strip():
-                if on_interim:
-                    on_interim(p.text.strip())
+                interim_text = p.text.strip()
+                if _is_spam(interim_text):
+                    log.warning(f"Spam in tool narration suppressed ({len(interim_text)} chars)")
+                elif on_interim:
+                    on_interim(interim_text)
 
         response_parts: list = []
 

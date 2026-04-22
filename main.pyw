@@ -14,6 +14,9 @@ def main():
 
     # Load encrypted keys on startup (if the file exists)
     keystore.load_if_exists()
+    _key_error = keystore.get_load_error()
+    if _key_error:
+        log.warning(f"Keystore load failed: {_key_error}")
 
     app = QApplication(sys.argv)
     app.setStyleSheet(build_qss(STATE))
@@ -47,6 +50,9 @@ def main():
                 log.info("Telegram started in setup mode (chat_id not set).")
         except Exception as exc:
             log.error(f"Failed to start Telegram bot: {exc}")
+
+    if _key_error:
+        window.set_status(f"⚠ {_key_error}")
 
     worker = StartupWorker(parent=app)
     worker.status.connect(window.set_status)

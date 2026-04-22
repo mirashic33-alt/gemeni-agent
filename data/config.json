@@ -1,10 +1,11 @@
 {
   "chat_model": "gemini-3-flash-preview",
-  "temperature": 0.9,
+  "temperature": 0.8,
+  "max_output_tokens": 8192,
   "internet_mode": "auto",
   "history_limit": 100,
   "max_tool_rounds": 10,
-  "max_continuations": 0,
+  "max_continuations": 2,
   "max_tool_nudges": 7,
   "loop_detect_threshold": 4,
   "max_result_chars": 12000,

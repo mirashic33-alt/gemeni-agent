@@ -5,14 +5,31 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QTextEdit, QPushButton, QFrame, QScrollArea
 )
-from PySide6.QtCore import Qt, QEvent, QTimer
-from PySide6.QtGui import QFont
+from PySide6.QtCore import Qt, QEvent, QTimer, QSize
+from PySide6.QtGui import QFont, QTextDocument
 
 from .theme_config import (
     STATE, ICON_FONT, MID_BUTTON_ICONS, SEND_ICON, MIC_ICON, UI_TEXTS, build_qss
 )
 from .settings_dialog import SettingsDialog
 from core.names import get_agent_name, get_user_name, refresh as refresh_names
+
+
+class _RichLabel(QLabel):
+    """QLabel that correctly computes heightForWidth for HTML/rich text."""
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, w):
+        doc = QTextDocument()
+        doc.setDefaultFont(self.font())
+        doc.setHtml(self.text())
+        doc.setTextWidth(max(1, w))
+        return int(doc.size().height()) + 2
+
+    def sizeHint(self):
+        w = self.width() if self.width() > 0 else 400
+        return QSize(100, self.heightForWidth(w))
 
 
 def create_hline():
@@ -51,7 +68,7 @@ def make_bubble(prefix, text, is_user):
     layout.setSpacing(2)
     prefix_lbl = QLabel(prefix)
     prefix_lbl.setObjectName("bubble_prefix")
-    text_lbl = QLabel()
+    text_lbl = _RichLabel()
     text_lbl.setObjectName("bubble_text")
     text_lbl.setWordWrap(True)
     text_lbl.setTextFormat(Qt.RichText)
@@ -59,6 +76,22 @@ def make_bubble(prefix, text, is_user):
     text_lbl.setText(_md_to_html(text) if not is_user else text.replace("\n", "<br>"))
     layout.addWidget(prefix_lbl)
     layout.addWidget(text_lbl)
+    return frame
+
+
+def make_tool_bubble():
+    """A reusable, hidden widget for live tool-call status (updated in-place)."""
+    frame = QFrame()
+    frame.setObjectName("bubble_tool")
+    layout = QVBoxLayout(frame)
+    layout.setContentsMargins(10, 4, 10, 4)
+    layout.setSpacing(0)
+    lbl = QLabel()
+    lbl.setObjectName("tool_status_lbl")
+    lbl.setWordWrap(True)
+    layout.addWidget(lbl)
+    frame.setVisible(False)
+    frame._label = lbl  # quick access
     return frame
 
 
@@ -96,7 +129,34 @@ class ChatArea(QFrame):
     def add_bubble(self, prefix, text, is_user):
         bubble = make_bubble(prefix, text, is_user)
         self._inner.addWidget(bubble)
+        self._inner.activate()
         return bubble
+
+    def add_tool_msg(self, text: str):
+        """Add a small tool-call indicator bubble (one per call, stays in history)."""
+        bubble = make_tool_bubble()
+        bubble._label.setText(text)
+        bubble.setVisible(True)
+        self._inner.addWidget(bubble)
+        self._inner.activate()
+        self.scroll_to_bottom()
+
+    def add_tool_bubble(self):
+        """Inserts the live tool-status widget at the bottom (call once)."""
+        bubble = make_tool_bubble()
+        self._inner.addWidget(bubble)
+        return bubble
+
+    def show_tool_status(self, tool_bubble, text: str):
+        """Update and show the tool-status widget."""
+        tool_bubble._label.setText(text)
+        if not tool_bubble.isVisible():
+            tool_bubble.setVisible(True)
+        self.scroll_to_bottom()
+
+    def hide_tool_bubble(self, tool_bubble):
+        """Hide the tool-status widget (keeps it in the layout for next use)."""
+        tool_bubble.setVisible(False)
 
     def scroll_to_bottom(self):
         self._auto_scroll = True
@@ -380,11 +440,14 @@ class MainWindow(QWidget):
         self._worker.response.connect(self._on_response)
         self._worker.interim.connect(self._on_interim)
         self._worker.error.connect(self._on_message_error)
+        self._tg_interim_count = 0   # reset per-request TG interim counter
         self._worker.start()
 
     def _on_interim(self, text: str):
         if text.startswith("[tool]"):
-            self.set_status(text[6:])  # status bar only — no bubble, no Telegram
+            label = text[6:]
+            self.set_status(label)                   # status bar
+            self.chat_area.add_tool_msg(f"⚙️ {label}")  # bubble in chat
             return
 
         from core.daily_log import append_message as log_msg
@@ -392,8 +455,12 @@ class MainWindow(QWidget):
         self.chat_area.add_bubble(f"[{ts}] {get_agent_name()} ·", text, is_user=False)
         self.chat_area.scroll_to_bottom()
         log_msg("agent", text)
+        # Mirror to Telegram — but cap at 10 interims per request to avoid Flood Control
+        _TG_INTERIM_MAX = 10
         if self._tg_bot:
-            self._tg_bot.post_message(text)
+            self._tg_interim_count = getattr(self, "_tg_interim_count", 0) + 1
+            if self._tg_interim_count <= _TG_INTERIM_MAX:
+                self._tg_bot.post_message(text)
 
     def _on_response(self, text: str):
         from data.chat_history import append
@@ -458,7 +525,9 @@ class MainWindow(QWidget):
     def on_tg_interim(self, text: str):
         """Interim from Telegram-initiated agent call — show in UI only, no re-send."""
         if text.startswith("[tool]"):
-            self.set_status(text[6:])  # status bar only
+            label = text[6:]
+            self.set_status(label)
+            self.chat_area.add_tool_msg(f"⚙️ {label}")
             return
         ts = datetime.now().strftime("%H:%M")
         self.chat_area.add_bubble(f"[{ts}] {get_agent_name()} ·", text, is_user=False)

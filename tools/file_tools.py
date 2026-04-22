@@ -269,7 +269,37 @@ def search_files(path: str, pattern: str) -> dict:
         return _err(str(e))
 
 
+_TREE_SKIP = {"__pycache__", "node_modules"}
+_TREE_SKIP_EXT = {".pyc"}
+
+
+def get_project_tree() -> dict:
+    """
+    Returns the full file and folder tree of the agent project, starting from the project root.
+    Use this when you need to find a file path or understand the project structure.
+    Call this FIRST instead of searching blindly with other tools.
+    """
+    root = _PROJECT_ROOT
+    project_name = os.path.basename(root)
+    lines = [f"📁 {project_name}/  ← project root"]
+    try:
+        for dirpath, dirs, files in os.walk(root):
+            dirs[:] = sorted(d for d in dirs if d not in _TREE_SKIP)
+            depth = os.path.relpath(dirpath, root).count(os.sep)
+            if dirpath != root:
+                indent = "  " * depth
+                lines.append(f"{indent}📁 {os.path.basename(dirpath)}/")
+            file_indent = "  " * (depth + 1)
+            for fname in sorted(files):
+                if os.path.splitext(fname)[1].lower() not in _TREE_SKIP_EXT:
+                    lines.append(f"{file_indent}📄 {fname}")
+    except Exception as e:
+        return _err(str(e))
+    return _ok("\n".join(lines))
+
+
 ALL_TOOLS = [
     list_files, read_file, write_file, append_file, create_dir,
     patch_file, delete_file, rename_file, move_file, search_files,
+    get_project_tree,
 ]

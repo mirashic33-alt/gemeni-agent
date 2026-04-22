@@ -11,7 +11,8 @@ _CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
 _DEFAULTS: dict = {
     # LLM
     "chat_model":     "gemini-3-flash-preview",
-    "temperature":    1.0,
+    "temperature":    0.9,
+    "max_output_tokens": 4096,   # max tokens per single model response (~3000 words)
     "internet_mode":  "auto",   # "auto" | "always" | "never"
     # Context
     "history_limit":  100,
